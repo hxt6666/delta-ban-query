@@ -71,9 +71,14 @@ def resolve_avatar(icon):
 # ============================================================
 def load_config():
     if not CONFIG.exists():
-        print(f"[!] 未找到 {CONFIG}")
-        print(f"    请复制 {CONFIG_EXAMPLE.name} → {CONFIG.name} 后运行，或用 --login 自动绑定")
-        sys.exit(1)
+        # 首次运行：基于示例生成空配置（账号清空），保证 python main.py --login 开箱即用
+        if not CONFIG_EXAMPLE.exists():
+            print(f"[!] 未找到 {CONFIG}")
+            sys.exit(1)
+        cfg = json.loads(CONFIG_EXAMPLE.read_text(encoding="utf-8"))
+        cfg["accounts"] = []
+        save_config(cfg)
+        print(f"[i] 首次运行，已生成 {CONFIG.name}（账号为空，请先执行 python main.py --login 扫码绑定）")
     cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
     cfg.setdefault("api_base_url", "https://delta-test-api.shallow.ink")
     cfg.setdefault("auth_mode", "anonymous")
@@ -484,7 +489,7 @@ def render_terminal(results):
     print(f"  🗓 三角洲封禁倒计时    刷新: {now_str()}")
     print(line)
     if not results:
-        print("  (尚未轮询)")
+        print("  (暂无账号：请先执行 python main.py --login 扫码绑定)")
         print(line)
         return
     for r in results.values():
