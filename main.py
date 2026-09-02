@@ -223,6 +223,12 @@ class DeltaAPI:
         av = resolve_avatar(data.get("icon"))
         if av:
             out["avatar"] = av
+        hc = data.get("hafcoinnum") or data.get("haf_coin_num") or ""
+        if hc:
+            out["hafcoin"] = str(hc)
+        tp = data.get("totalPrice") or data.get("total_price") or ""
+        if tp:
+            out["totalprice"] = str(tp)
         return out
 
     def ban_history(self, framework_token):
@@ -432,17 +438,13 @@ class Tracker:
             except Exception:
                 info = {}
             if info:
-                if info.get("level") and info["level"] != str(acc.get("level", "")):
-                    acc["level"] = info["level"]
-                    config_dirty = True
-                if info.get("role_name") and info["role_name"] != acc.get("role_name", ""):
-                    acc["role_name"] = info["role_name"]
-                    config_dirty = True
-                if info.get("avatar") and info["avatar"] != acc.get("avatar", ""):
-                    acc["avatar"] = info["avatar"]
-                    config_dirty = True
-            if acc.get("level"):
-                results[disp]["level"] = acc["level"]
+                for k in ("level", "role_name", "avatar", "hafcoin", "totalprice"):
+                    if info.get(k) and info[k] != str(acc.get(k, "")):
+                        acc[k] = info[k]
+                        config_dirty = True
+            for k in ("level", "hafcoin", "totalprice"):
+                if acc.get(k):
+                    results[disp][k] = acc[k]
             # 记录 uid，方便精确删除/操作（同名时前端也能区分）
             results[disp]["uid"] = token
         if config_dirty:
@@ -697,6 +699,10 @@ border-radius:8px;padding:8px 0;font-size:13px;cursor:pointer;text-align:center;
 .tab.active{background:#3b82f6;border-color:#3b82f6;color:#fff}
 .role-name{color:#20c997;font-size:12px;margin-top:2px}
 .ava{width:38px;height:38px;border-radius:50%;object-fit:cover;border:2px solid var(--border);margin-bottom:6px}
+.ava-row{display:flex;align-items:center;gap:10px;margin-bottom:2px}
+.ava-row .ava{margin-bottom:0}
+.assets{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}
+.assets b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;margin-left:2px}
 </style>
 </head>
 <body>
@@ -771,6 +777,7 @@ const stateMap={clean:['ok','正常'],banned:['ban','封禁中'],permanent:['per
 const $=id=>document.getElementById(id);
 function esc(s){const d=document.createElement('div');d.textContent=(s||'');return d.innerHTML}
 function escAttr(s){return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function fmtNum(v){const n=Number(v);if(!isFinite(n))return esc(v);if(n>=1e8)return (n/1e8).toFixed(2)+'亿';if(n>=1e4)return (n/1e4).toFixed(1)+'万';return String(n)}
 let accountCount=0, curToken=null, pollTimer=null, modalClosing=false, cdTarget=null, editUid=null;
 
 function localToTs(v){
@@ -917,7 +924,13 @@ async function load(){
         +(r.uid?'<button class="btn-edit" title="改名 / 备注" onclick="openEditModal(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;,&quot;'+escAttr(r.note||'')+'&quot;)">✏️</button>'
               +'<button class="btn-del" title="删除账号" onclick="delAccount(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;)">🗑</button>':'')
         +'</div>'
-        +(r.avatar?'<img class="ava" src="'+esc(r.avatar)+'" alt="" onerror="this.remove()">':'')
+        +((r.avatar||r.hafcoin||r.totalprice)?'<div class="ava-row">'
+          +(r.avatar?'<img class="ava" src="'+esc(r.avatar)+'" alt="" onerror="this.remove()">':'')
+          +((r.hafcoin||r.totalprice)?'<div class="assets">'
+            +(r.hafcoin?'<div>💰 哈夫币<b title="'+escAttr(r.hafcoin)+'">'+fmtNum(r.hafcoin)+'</b></div>':'')
+            +(r.totalprice?'<div>🏦 总资产<b title="'+escAttr(r.totalprice)+'">'+fmtNum(r.totalprice)+'</b></div>':'')
+          +'</div>':'')
+        +'</div>':'')
         +((r.role_name||r.level)?'<div class="role-name">🎮 '+esc(r.role_name||'')+(r.level?' · ⭐Lv.'+esc(r.level):'')+(r.platform==='wegame'?' · WeGame':'')+'</div>':'')
         +(r.note?'<div class="meta">📝 '+esc(r.note)+'</div>':'')
         +body;
@@ -1017,6 +1030,8 @@ def run_web(cfg, port=8808):
                 r["avatar"] = acc.get("avatar", "")
                 r["note"] = acc.get("note", "")
                 r["level"] = r.get("level") or acc.get("level", "")
+                r["hafcoin"] = r.get("hafcoin") or acc.get("hafcoin", "")
+                r["totalprice"] = r.get("totalprice") or acc.get("totalprice", "")
                 # 若前端给了后缀 #xxxx,还原纯名字用于显示
                 base = k.split(" #")[0]
                 if base != k:
