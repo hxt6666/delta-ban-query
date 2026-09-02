@@ -191,6 +191,40 @@ class DeltaAPI:
         data = d.get("data")
         return data if isinstance(data, dict) else {}
 
+    def role_info(self, acc):
+        """查询三角洲角色信息（等级/角色名/头像），用于卡片 ⭐Lv 展示。
+        实测后端只有 wegame/role 有角色数据（qqsafe/role 不存在, 404），
+        所以仅当账号带 wegame_token 时能拿到。失败/无 token 返回 {}"""
+        wt = acc.get("wegame_token", "")
+        if not wt:
+            return {}
+        try:
+            _s = requests.Session()
+            r = _s.get(f"{self.base_url}/api/v1/df/wegame/role",
+                       headers=self._headers({"X-Framework-Token": wt}), timeout=12)
+            d = r.json()
+            _s.close()
+        except Exception:
+            return {}
+        if d.get("code") != 0:
+            return {}
+        data = d.get("data")
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        if not isinstance(data, dict):
+            return {}
+        out = {}
+        lv = data.get("level") or data.get("role_level") or ""
+        if lv:
+            out["level"] = str(lv)
+        nm = data.get("name") or data.get("role_name") or data.get("nickname") or ""
+        if nm:
+            out["role_name"] = str(nm)
+        av = resolve_avatar(data.get("icon"))
+        if av:
+            out["avatar"] = av
+        return out
+
     def ban_history(self, framework_token):
         """查询环数与惩罚记录（每次独立 Session，避免多线程共享 Session 卡死）"""
         try:
@@ -374,6 +408,7 @@ class Tracker:
         now = int(time.time())
         results = {}
         seen = {}
+        config_dirty = False
         for acc in self.accounts:
             name = acc.get("name") or acc.get("framework_token", "?")[:10]
             token = acc.get("framework_token", "")
@@ -391,8 +426,27 @@ class Tracker:
             results[disp], _ = apply_cooldown(acc, results[disp], now)
             # 观察期：优先级高于冷号
             results[disp], _ = apply_observe(acc, results[disp], now)
+            # 角色等级：有 wegame_token 才查得到（后端无 qqsafe 角色接口），失败不影响封禁数据
+            try:
+                info = self.api.role_info(acc)
+            except Exception:
+                info = {}
+            if info:
+                if info.get("level") and info["level"] != str(acc.get("level", "")):
+                    acc["level"] = info["level"]
+                    config_dirty = True
+                if info.get("role_name") and info["role_name"] != acc.get("role_name", ""):
+                    acc["role_name"] = info["role_name"]
+                    config_dirty = True
+                if info.get("avatar") and info["avatar"] != acc.get("avatar", ""):
+                    acc["avatar"] = info["avatar"]
+                    config_dirty = True
+            if acc.get("level"):
+                results[disp]["level"] = acc["level"]
             # 记录 uid，方便精确删除/操作（同名时前端也能区分）
             results[disp]["uid"] = token
+        if config_dirty:
+            save_config(self.cfg)
         with self.lock:
             self.results = results
             self.last_scan = now
@@ -864,7 +918,7 @@ async function load(){
               +'<button class="btn-del" title="删除账号" onclick="delAccount(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;)">🗑</button>':'')
         +'</div>'
         +(r.avatar?'<img class="ava" src="'+esc(r.avatar)+'" alt="" onerror="this.remove()">':'')
-        +(r.role_name?'<div class="role-name">🎮 '+esc(r.role_name)+(r.platform==='wegame'?' · WeGame':'')+'</div>':'')
+        +((r.role_name||r.level)?'<div class="role-name">🎮 '+esc(r.role_name||'')+(r.level?' · ⭐Lv.'+esc(r.level):'')+(r.platform==='wegame'?' · WeGame':'')+'</div>':'')
         +(r.note?'<div class="meta">📝 '+esc(r.note)+'</div>':'')
         +body;
       grid.appendChild(card);
@@ -962,6 +1016,7 @@ def run_web(cfg, port=8808):
                 r["platform"] = acc.get("platform", "qqsafe")
                 r["avatar"] = acc.get("avatar", "")
                 r["note"] = acc.get("note", "")
+                r["level"] = r.get("level") or acc.get("level", "")
                 # 若前端给了后缀 #xxxx,还原纯名字用于显示
                 base = k.split(" #")[0]
                 if base != k:
