@@ -287,6 +287,7 @@ def summarize(name, result, now):
 # 冷号模式（冷却倒计时）
 # ============================================================
 DEFAULT_COOLDOWN_HOURS = 24  # 默认冷却 24 小时
+DEFAULT_OBSERVE_HOURS = 72   # 观察期固定 3 天，无其它时长选项
 
 
 def apply_cooldown(acc, result, now_ts):
@@ -320,6 +321,37 @@ def apply_cooldown(acc, result, now_ts):
         "pct": pct,
     }
     return {**result, "status": "cooldown", "cooldown": cooldown}, True
+
+
+def apply_observe(acc, result, now_ts):
+    """根据账号配置的 observe 字段，把观察期状态合并进 result。
+    observe 结构: {"start": unix秒, "duration_h": 72(固定3天)}
+    优先级高于冷号冷却。返回: (result, 是否观察期中)"""
+    ob = acc.get("observe") or {}
+    try:
+        start = int(ob.get("start") or 0)
+    except Exception:
+        return result, False
+    if not start:
+        return result, False
+    dur = int(ob.get("duration_h") or DEFAULT_OBSERVE_HOURS)
+    end = start + dur * 3600
+    remaining = end - now_ts
+    if remaining <= 0:
+        # 观察期已结束，自动清除
+        acc.pop("observe", None)
+        return result, False
+    total = dur * 3600
+    pct = max(0, min(100, int((total - remaining) / total * 100)))
+    observe = {
+        "kind": "observe",
+        "remaining": remaining,
+        "text": fmt_duration(remaining),
+        "end": end,
+        "end_str": datetime.fromtimestamp(end).strftime("%m-%d %H:%M"),
+        "pct": pct,
+    }
+    return {**result, "status": "observe", "observe": observe}, True
 
 
 # ============================================================
@@ -357,6 +389,8 @@ class Tracker:
                 results[disp] = summarize(disp, self.api.ban_history(token), now)
             # 冷号模式：若账号配置了冷却，无论有无封禁都叠加冷却状态
             results[disp], _ = apply_cooldown(acc, results[disp], now)
+            # 观察期：优先级高于冷号
+            results[disp], _ = apply_observe(acc, results[disp], now)
             # 记录 uid，方便精确删除/操作（同名时前端也能区分）
             results[disp]["uid"] = token
         with self.lock:
@@ -500,6 +534,9 @@ def render_terminal(results):
         elif r["status"] == "cooldown":
             c = r["cooldown"]
             print(f"  🧊 {r['name']}: 冷号中 剩余 {c['text']} | 解冻 {c['end_str']} (进度{c['pct']}%)")
+        elif r["status"] == "observe":
+            o = r["observe"]
+            print(f"  👁 {r['name']}: 观察期中 剩余 {o['text']} | 出关 {o['end_str']} (进度{o['pct']}%)")
         elif r["status"] == "permanent":
             for b in r["bans"]:
                 print(f"  ❌ {r['name']}: 永久封禁 | {b['reason']}")
@@ -553,6 +590,9 @@ h1{font-size:22px;margin-bottom:4px}
 .dot.ok{background:var(--green)}.dot.ban{background:var(--red)}
 .dot.perm{background:var(--red);box-shadow:0 0 8px var(--red)}.dot.err{background:var(--orange)}
 .dot.cd{background:#20c997;box-shadow:0 0 8px #20c997}
+.dot.obs{background:#8b5cf6;box-shadow:0 0 8px #8b5cf6}
+.eyes{font-size:22px;letter-spacing:6px;line-height:1;animation:blink 1.6s infinite}
+@keyframes blink{0%,86%,100%{opacity:1}90%,96%{opacity:.15}}
 .countdown{font-size:27px;font-weight:700;margin:4px 0 2px;font-variant-numeric:tabular-nums}
 .countdown.red{color:var(--red)}.countdown.orange{color:var(--orange)}
 .meta{font-size:12px;color:var(--muted);margin-top:4px}
@@ -673,7 +713,7 @@ border-radius:8px;padding:8px 0;font-size:13px;cursor:pointer;text-align:center;
 </div>
 
 <script>
-const stateMap={clean:['ok','正常'],banned:['ban','封禁中'],permanent:['perm','永久'],cooldown:['cd','冷号中'],error:['err','失败']};
+const stateMap={clean:['ok','正常'],banned:['ban','封禁中'],permanent:['perm','永久'],cooldown:['cd','冷号中'],observe:['obs','观察期'],error:['err','失败']};
 const $=id=>document.getElementById(id);
 function esc(s){const d=document.createElement('div');d.textContent=(s||'');return d.innerHTML}
 function escAttr(s){return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
@@ -765,6 +805,16 @@ async function clearCd(nameEnc){
   await fetch('/api/cooldown?name='+encodeURIComponent(name));
   load();
 }
+// 观察期：固定 3 天(72小时)，无其它时长选项；uid 精确匹配账号
+function startObserve(uid){
+  if(!confirm('让该账号进入观察期？固定 3 天（72小时），到期自动出关。')) return;
+  fetch('/api/observe?uid='+encodeURIComponent(uid)+'&start='+Math.floor(Date.now()/1000)).then(()=>load());
+}
+async function clearObserve(uid){
+  if(!confirm('提前结束该账号的观察期？')) return;
+  await fetch('/api/observe?uid='+encodeURIComponent(uid));
+  load();
+}
 
 async function load(){
   try{
@@ -778,7 +828,8 @@ async function load(){
       let body,dotCls=dot;
       if(r.status==='clean'){
         body='<div class="countdown" style="color:var(--green)">✅ 正常</div><div class="meta">无封禁记录</div>'
-          +'<div style="margin-top:8px"><button class="btn btn-sm" onclick="startCooldown(&quot;'+encodeURIComponent(name)+'&quot;)">🧊 设为冷号</button></div>';
+          +'<div style="margin-top:8px"><button class="btn btn-sm" onclick="startCooldown(&quot;'+encodeURIComponent(name)+'&quot;)">🧊 设为冷号</button>'
+          +'<button class="btn btn-sm" style="margin-left:6px" onclick="startObserve(&quot;'+escAttr(r.uid||'')+'&quot;)">👁️ 进入观察期</button></div>';
       }else if(r.status==='error'){
         body='<div class="countdown" style="font-size:15px">⚠ 查询失败</div><div class="meta">'+esc(r.msg||'')+'</div>';
       }else if(r.status==='permanent'){
@@ -790,13 +841,21 @@ async function load(){
           +'<div class="meta">冷号中 · 预计 '+esc(c.end_str)+' 解冻</div>'
           +'<div class="progress" style="background:#1d2230"><i style="width:'+c.pct+'%;background:linear-gradient(90deg,#20c997,var(--green))"></i></div>'
           +'<div style="margin-top:8px"><button class="btn btn-sm btn-warn" onclick="clearCd(&quot;'+encodeURIComponent(name)+'&quot;)">✅ 提前解冻</button></div>';
+      }else if(r.status==='observe'){
+        const o=r.observe;
+        body='<div class="eyes">👁️👁️</div>'
+          +'<div class="countdown" style="color:#a78bfa;font-size:24px">'+esc(o.text)+'</div>'
+          +'<div class="meta">观察期中 · 预计 '+esc(o.end_str)+' 出关</div>'
+          +'<div class="progress" style="background:#1d2230"><i style="width:'+o.pct+'%;background:linear-gradient(90deg,#8b5cf6,#a78bfa)"></i></div>'
+          +'<div style="margin-top:8px"><button class="btn btn-sm btn-warn" onclick="clearObserve(&quot;'+escAttr(r.uid||'')+'&quot;)">✅ 提前出观察期</button></div>';
       }else{
         const n=r.nearest;
         body='<div class="countdown '+(n.remaining<=21600?'red':'orange')+'">'+esc(n.text)+'</div>'
           +'<div class="meta">'+esc(n.game?('🎮 '+n.game+' · '):'')+'预计解封 '+esc(n.end_str)+' · '+esc(n.reason)+'</div>'
           +(r.bans.length>1?'<div class="meta">另有 '+(r.bans.length-1)+' 条处罚</div>':'')
           +'<div class="progress"><i style="width:'+(n.remaining<=21600?90:70)+'%"></i></div>'
-          +'<div style="margin-top:8px"><button class="btn btn-sm" onclick="startCooldown(&quot;'+encodeURIComponent(name)+'&quot;)">🧊 设为冷号</button></div>';
+          +'<div style="margin-top:8px"><button class="btn btn-sm" onclick="startCooldown(&quot;'+encodeURIComponent(name)+'&quot;)">🧊 设为冷号</button>'
+          +'<button class="btn btn-sm" style="margin-left:6px" onclick="startObserve(&quot;'+escAttr(r.uid||'')+'&quot;)">👁️ 进入观察期</button></div>';
       }
       const card=document.createElement('div'); card.className='card';
       const nm=escAttr(r.name||name);
@@ -1140,6 +1199,37 @@ def run_web(cfg, port=8808):
                 else:
                     acc.pop("cooldown", None)
                     msg = f"{name} 冷却已解除"
+                save_config(cfg)
+                tracker.accounts = cfg["accounts"]
+                tracker.poll_async()
+                self._json({"code": 0, "msg": msg})
+                return
+
+            # ---- 设置/解除观察期(固定3天/72小时，无其它时长选项) ----
+            if path == "/api/observe":
+                uid = (qs.get("uid") or [""])[0].strip()
+                name = (qs.get("name") or [""])[0].strip()
+                acc = None
+                if uid:
+                    acc = next((a for a in cfg["accounts"] if a.get("framework_token") == uid), None)
+                if acc is None and name:
+                    acc = next((a for a in cfg["accounts"] if a.get("name") == name), None)
+                if acc is None:
+                    self._json({"code": 1, "msg": "账号不存在"})
+                    return
+                if qs.get("start"):
+                    # 进入观察期：时长固定 3 天
+                    try:
+                        start = int(qs["start"][0])
+                    except Exception:
+                        start = int(time.time())
+                    acc["observe"] = {"start": start, "duration_h": DEFAULT_OBSERVE_HOURS}
+                    from datetime import datetime as _dt
+                    _t = _dt.fromtimestamp(start).strftime("%m-%d %H:%M")
+                    msg = f"{acc.get('name', '')} 已进入观察期(3天,从{_t}起)"
+                else:
+                    acc.pop("observe", None)
+                    msg = f"{acc.get('name', '')} 已提前结束观察期"
                 save_config(cfg)
                 tracker.accounts = cfg["accounts"]
                 tracker.poll_async()

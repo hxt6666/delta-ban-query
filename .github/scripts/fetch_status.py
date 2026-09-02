@@ -132,8 +132,31 @@ def main():
                     },
                 }
 
+        # ---- 观察期(固定3天)：与本地同逻辑，优先于冷号 ----
+        ob_status = None
+        ob = acc.get("observe") or {}
+        try:
+            ob_start = int(ob.get("start") or 0)
+        except Exception:
+            ob_start = 0
+        if ob_start:
+            ob_hours = int(ob.get("duration_h") or 72)
+            ob_end = ob_start + ob_hours * 3600
+            ob_remaining = ob_end - now
+            if ob_remaining > 0:
+                ob_total = ob_hours * 3600
+                ob_status = {
+                    "status": "observe",
+                    "observe": {
+                        "remaining": ob_remaining,
+                        "text": fmt_duration(ob_remaining),
+                        "end_str": cn_ts(ob_end),
+                        "pct": max(0, min(100, int((ob_total - ob_remaining) / ob_total * 100))),
+                    },
+                }
+
         if not token:
-            results[name] = cd_status or {"status": "error", "msg": "未配置 framework_token"}
+            results[name] = ob_status or cd_status or {"status": "error", "msg": "未配置 framework_token"}
             continue
         try:
             r = s.get(f"{API_BASE}/api/v1/df/qqsafe/ban",
@@ -154,11 +177,13 @@ def main():
                                  "nearest": min(recs, key=lambda x: x.get("remaining", 99**9))}
             else:
                 results[name] = {"status": "clean", "bans": []}
-            # 冷却优先于一切状态展示
-            if cd_status:
+            # 观察期 > 冷号 > 常规状态
+            if ob_status:
+                results[name] = {**results[name], "status": "observe", "observe": ob_status["observe"]}
+            elif cd_status:
                 results[name] = {**results[name], "status": "cooldown", "cooldown": cd_status["cooldown"]}
         except Exception as e:
-            results[name] = cd_status or {"status": "error", "msg": f"网络/解析异常: {e}"}
+            results[name] = ob_status or cd_status or {"status": "error", "msg": f"网络/解析异常: {e}"}
 
     # ★ 脱敏：Pages 公开可见，只保留状态与倒计时，隐藏角色名/封禁原因/头像/游戏名
     for name, r in results.items():
@@ -173,6 +198,8 @@ def main():
             slim["text"] = "永久"
         elif st == "cooldown" and r.get("cooldown"):
             slim["cooldown"] = r["cooldown"]
+        elif st == "observe" and r.get("observe"):
+            slim["observe"] = r["observe"]
         elif st == "error":
             slim["msg"] = r.get("msg", "查询失败")
         results[name] = slim

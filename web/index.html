@@ -18,6 +18,9 @@ h1{font-size:22px;margin-bottom:4px}
 .dot.ok{background:var(--green)}.dot.ban{background:var(--red)}
 .dot.perm{background:var(--red);box-shadow:0 0 8px var(--red)}.dot.err{background:var(--orange)}
 .dot.cd{background:#20c997;box-shadow:0 0 8px #20c997}
+.dot.obs{background:#8b5cf6;box-shadow:0 0 8px #8b5cf6}
+.eyes{font-size:22px;letter-spacing:6px;line-height:1;animation:blink 1.6s infinite}
+@keyframes blink{0%,86%,100%{opacity:1}90%,96%{opacity:.15}}
 .countdown{font-size:27px;font-weight:700;margin:4px 0 2px;font-variant-numeric:tabular-nums}
 .countdown.red{color:var(--red)}.countdown.orange{color:var(--orange)}
 .meta{font-size:12px;color:var(--muted);margin-top:4px}
@@ -35,7 +38,7 @@ h1{font-size:22px;margin-bottom:4px}
 <div class="grid" id="grid"></div>
 <div class="footer" id="footer"></div>
 <script>
-const stateMap={clean:['ok','正常'],banned:['ban','封禁中'],permanent:['perm','永久'],cooldown:['cd','冷号中'],error:['err','失败']};
+const stateMap={clean:['ok','正常'],banned:['ban','封禁中'],permanent:['perm','永久'],cooldown:['cd','冷号中'],observe:['obs','观察期'],error:['err','失败']};
 function esc(s){const d=document.createElement('div');d.textContent=(s||'');return d.innerHTML}
 function render(data,isDirect){
   if(!data){ document.getElementById('grid').innerHTML='<div class="card"><div class="countdown" style="font-size:16px">⚠ 数据尚未生成</div><div class="meta">首次 Actions 运行后会自动生成 status.json，请稍后刷新</div></div>'; return; }
@@ -53,6 +56,13 @@ function render(data,isDirect){
       body='<div class="countdown" style="color:#20c997;font-size:24px">🧊 '+esc(c.text)+'</div>'
         +'<div class="meta">冷号中 · 预计 '+esc(c.end_str||'—')+' 解冻</div>'
         +'<div class="progress" style="background:#1d2230"><i style="width:'+(c.pct||0)+'%;background:linear-gradient(90deg,#20c997,var(--green))"></i></div>';
+    }
+    else if(r.status==='observe'){
+      const o=r.observe;
+      body='<div class="eyes">👁️👁️</div>'
+        +'<div class="countdown" style="color:#a78bfa;font-size:24px">'+esc(o.text)+'</div>'
+        +'<div class="meta">观察期中 · 预计 '+esc(o.end_str||'—')+' 出关</div>'
+        +'<div class="progress" style="background:#1d2230"><i style="width:'+(o.pct||0)+'%;background:linear-gradient(90deg,#8b5cf6,#a78bfa)"></i></div>';
     }
     else{
       // 兼容两种数据：脱敏快照(status.json, 字段在顶层) / 本地直连(API, 字段在 nearest)
