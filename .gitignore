@@ -1,0 +1,13 @@
+# API Key & 敏感信息
+accounts.json
+使用指南.txt
+*.key
+.env
+
+# 本地运行产物
+web_panel.log
+web_panel.err.log
+login_qr.png
+__pycache__/
+*.pyc
+web_panel*.log

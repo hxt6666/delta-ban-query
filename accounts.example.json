@@ -1,0 +1,14 @@
+{
+  "api_base_url": "https://delta-test-api.shallow.ink",
+  "auth_mode": "anonymous",
+  "api_key": "",
+  "poll_interval_minutes": 30,
+  "notify_before_hours": [24, 6, 1],
+  "accounts": [
+    {
+      "name": "大号",
+      "framework_token": "通过 python main.py --login 扫码自动获取",
+      "note": "备注（可选）"
+    }
+  ]
+}

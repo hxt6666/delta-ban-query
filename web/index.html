@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>三角洲封号倒计时 · 网页版</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--bg:#0f1115;--card:#171a21;--text:#e6e9f0;--muted:#8b93a7;
+--red:#ff4757;--orange:#ffa502;--green:#2ed573;--border:#2a2f3d;--blue:#3b82f6}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",sans-serif;padding:24px;min-height:100vh}
+h1{font-size:22px;margin-bottom:4px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+.name{font-size:16px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.dot.ok{background:var(--green)}.dot.ban{background:var(--red)}
+.dot.perm{background:var(--red);box-shadow:0 0 8px var(--red)}.dot.err{background:var(--orange)}
+.dot.cd{background:#20c997;box-shadow:0 0 8px #20c997}
+.countdown{font-size:27px;font-weight:700;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+.countdown.red{color:var(--red)}.countdown.orange{color:var(--orange)}
+.meta{font-size:12px;color:var(--muted);margin-top:4px}
+.role-name{font-size:12px;color:var(--blue);margin:-4px 0 8px}
+.ava{width:38px;height:38px;border-radius:50%;object-fit:cover;border:2px solid var(--border);margin-bottom:6px}
+.footer{margin-top:24px;color:var(--muted);font-size:12px}
+.progress{width:100%;height:6px;background:#1d2230;border-radius:4px;margin-top:12px;overflow:hidden}
+.progress>i{display:block;height:100%;background:linear-gradient(90deg,var(--orange),var(--red));border-radius:4px;transition:width .5s}
+.note{background:#17203a;border:1px solid #25314f;color:#9db4e0;font-size:12px;padding:10px 12px;border-radius:8px;margin-top:12px;line-height:1.6}
+</style>
+</head>
+<body>
+<h1>🗓 三角洲封号倒计时</h1>
+<div class="sub" id="sub">加载中...</div>
+<div class="grid" id="grid"></div>
+<div class="footer" id="footer"></div>
+<script>
+const stateMap={clean:['ok','正常'],banned:['ban','封禁中'],permanent:['perm','永久'],cooldown:['cd','冷号中'],error:['err','失败']};
+function esc(s){const d=document.createElement('div');d.textContent=(s||'');return d.innerHTML}
+function render(data,isDirect){
+  if(!data){ document.getElementById('grid').innerHTML='<div class="card"><div class="countdown" style="font-size:16px">⚠ 数据尚未生成</div><div class="meta">首次 Actions 运行后会自动生成 status.json，请稍后刷新</div></div>'; return; }
+  const results=data.results||{}; const list=Object.entries(results);
+  const grid=document.getElementById('grid'); grid.innerHTML='';
+  if(!list.length){ grid.innerHTML='<div class="card"><div class="meta">暂无账号数据</div></div>'; }
+  for(const [name,r] of list){
+    const [dot,label]=stateMap[r.status]||stateMap.error;
+    let body,dotCls=dot;
+    if(r.status==='clean'){ body='<div class="countdown" style="color:var(--green)">✅ 正常</div><div class="meta">无封禁记录</div>'; }
+    else if(r.status==='error'){ body='<div class="countdown" style="font-size:15px">⚠ 查询失败</div><div class="meta">'+esc(r.msg||'')+'</div>'; }
+    else if(r.status==='permanent'){ body='<div class="countdown red">♾ 永久封禁</div>'; }
+    else if(r.status==='cooldown'){
+      const c=r.cooldown;
+      body='<div class="countdown" style="color:#20c997;font-size:24px">🧊 '+esc(c.text)+'</div>'
+        +'<div class="meta">冷号中 · 预计 '+esc(c.end_str||'—')+' 解冻</div>'
+        +'<div class="progress" style="background:#1d2230"><i style="width:'+(c.pct||0)+'%;background:linear-gradient(90deg,#20c997,var(--green))"></i></div>';
+    }
+    else{
+      // 兼容两种数据：脱敏快照(status.json, 字段在顶层) / 本地直连(API, 字段在 nearest)
+      const n=r.nearest||r;
+      const rem=n.remaining||0;
+      const pct=rem>0?Math.max(6,Math.min(100,100-(rem/(n.total||24*3600)*100))):100;
+      body='<div class="countdown '+(rem<=21600?'red':'orange')+'">'+esc(n.text)+'</div>'
+        +'<div class="meta">预计解封 '+esc(n.end_str||'—')+(n.reason?(' · '+esc(n.reason)):'')+'</div>'
+        +(r.bans&&r.bans.length>1?'<div class="meta">另有 '+(r.bans.length-1)+' 条处罚</div>':'')
+        +'<div class="progress"><i style="width:'+pct+'%"></i></div>';
+    }
+    const card=document.createElement('div'); card.className='card';
+    card.innerHTML='<div class="name"><span class="dot '+dotCls+'"></span>'+esc(name)+'<span class="tag">'+label+'</span></div>'
+      +(r.avatar?'<img class="ava" src="'+esc(r.avatar)+'" alt="" onerror="this.remove()">':'')
+      +(r.role_name?'<div class="role-name">🎮 '+esc(r.role_name)+(r.platform==='wegame'?' · WeGame':'')+'</div>':'')
+      +body;
+    grid.appendChild(card);
+  }
+  const now=new Date().toLocaleString('zh-CN',{hour12:false});
+  document.getElementById('sub').textContent='最后更新: '+(data.updated_at||'—')+' · 共 '+list.length+' 个账号';
+  const src=isDirect?'（API 直连模式）':'（GitHub Actions 定时快照，约30分钟刷新）';
+  document.getElementById('footer').textContent='页面数据由 GitHub Actions 自动更新 · 已脱敏(仅显示状态与倒计时)'+(data.updated_at?'':'，首次运行需等待约1分钟')+src;
+}
+(async()=>{
+  try{
+    const r=await fetch('status.json?t='+Date.now());
+    if(r.ok){ render(await r.json(),false); return; }
+  }catch(e){}
+  try{
+    // fallback: 尝试直连 API（仅开发用）
+    const r2=await fetch('http://127.0.0.1:8808/api/status');
+    if(r2.ok){ render(await r2.json(),true); return; }
+  }catch(e){}
+  render(null);
+})();
+setInterval(async()=>{
+  try{ const r=await fetch('status.json?t='+Date.now()); if(r.ok) render(await r.json(),false); }catch(e){}
+},60000);
+</script>
+</body>
+</html>

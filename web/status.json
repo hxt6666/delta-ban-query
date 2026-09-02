@@ -1,0 +1,27 @@
+{
+  "updated_at": "2026-09-03 01:27:32",
+  "count": 3,
+  "results": {
+    "苹果12对接": {
+      "status": "cooldown",
+      "cooldown": {
+        "remaining": 83009,
+        "text": "23小时3分",
+        "end_str": "09-04 00:31",
+        "pct": 3
+      }
+    },
+    "大号屠龙号": {
+      "status": "banned",
+      "text": "5天14小时51分",
+      "end_str": "09-08 16:19",
+      "remaining": 485510
+    },
+    "泽安3": {
+      "status": "banned",
+      "text": "29天17小时27分",
+      "end_str": "10-02 18:55",
+      "remaining": 2568451
+    }
+  }
+}

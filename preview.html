@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>三角洲封号倒计时</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--bg:#0f1115;--card:#171a21;--text:#e6e9f0;--muted:#8b93a7;
+--red:#ff4757;--orange:#ffa502;--green:#2ed573;--border:#2a2f3d}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",sans-serif;padding:24px}
+h1{font-size:22px;margin-bottom:4px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+.name{font-size:16px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.dot.ok{background:var(--green)}.dot.ban{background:var(--red)}
+.dot.perm{background:var(--red);box-shadow:0 0 8px var(--red)}.dot.err{background:var(--orange)}
+.countdown{font-size:27px;font-weight:700;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+.countdown.red{color:var(--red)}.countdown.orange{color:var(--orange)}
+.meta{font-size:12px;color:var(--muted);margin-top:4px}
+.footer{margin-top:24px;color:var(--muted);font-size:12px}
+.tag{display:inline-block;background:#252a3a;border:1px solid var(--border);color:var(--muted);
+font-size:11px;padding:2px 8px;border-radius:20px;margin-left:auto}
+</style>
+</head>
+<body>
+<h1>🗓 三角洲封号倒计时</h1>
+<div class="sub" id="sub">加载中...</div>
+<div class="grid" id="grid"></div>
+<div class="footer">页面每 15 秒自动刷新 · 后台每 30 分钟轮询一次 API</div>
+<script>
+const stateMap={clean:['ok','正常'],banned:['ban','封禁中'],permanent:['perm','永久'],error:['err','失败']};
+function esc(s){const d=document.createElement('div');d.textContent=(s||'');return d.innerHTML}
+async function load(){
+  try{
+    const data=await (await fetch('/api/status')).json();
+    document.getElementById('sub').textContent='最后轮询: '+(data.last_scan||'—')+' · 共 '+data.count+' 个账号 · 自动刷新中';
+    const grid=document.getElementById('grid'); grid.innerHTML='';
+    for(const [name,r] of Object.entries(data.results)){
+      const [dot,label]=stateMap[r.status]||stateMap.error;
+      let body,dotCls=dot;
+      if(r.status==='clean'){
+        body='<div class="countdown" style="color:var(--green)">✅ 正常</div><div class="meta">无违规记录</div>';
+      }else if(r.status==='error'){
+        body='<div class="countdown" style="font-size:15px">⚠ 查询失败</div><div class="meta">'+esc(r.msg||'')+'</div>';
+      }else if(r.status==='permanent'){
+        body='<div class="countdown red">♾ 永久封禁</div><div class="meta">'+esc(r.bans.map(b=>b.reason).join(' / '))+'</div>';
+      }else{
+        const n=r.nearest;
+        body='<div class="countdown '+(n.remaining<=21600?'red':'orange')+'">'+esc(n.text)+'</div>'
+          +'<div class="meta">预计解封 '+esc(n.end_str)+' · '+esc(n.reason)+'</div>'
+          +(r.bans.length>1?'<div class="meta">另有 '+(r.bans.length-1)+' 条处罚</div>':'');
+      }
+      const card=document.createElement('div'); card.className='card';
+      card.innerHTML='<div class="name"><span class="dot '+dotCls+'"></span>'+esc(name)+'<span class="tag">'+label+'</span></div>'+body;
+      grid.appendChild(card);
+    }
+  }catch(e){ document.getElementById('sub').textContent='加载失败: '+e.message; }
+}
+load(); setInterval(load,15000);
+</script>
+</body>
+</html>
