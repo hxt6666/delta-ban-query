@@ -712,7 +712,7 @@ input{background:#10131c;border:1px solid var(--border);color:var(--text);border
 padding:9px 12px;font-size:14px;width:100%;box-sizing:border-box;outline:none}
 input:focus{border-color:#3b82f6}
 #modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10;align-items:center;justify-content:center}
-#cdModal,#editModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:11;align-items:center;justify-content:center}
+#cdModal,#editModal,#recModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:11;align-items:center;justify-content:center}
 #modalBox,#cdModalBox,#editModalBox{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;width:340px;max-width:92vw}
 #modalBox h3,#cdModalBox h3,#editModalBox h3{margin:0 0 6px;font-size:16px}
 #qrBox{display:none;margin-top:14px;text-align:center}
@@ -988,7 +988,7 @@ function openRecordModal(uid, name){
   recUid=uid; recQueue='sol'; recAfter='';
   $('recTitle').textContent=(name||'账号')+' 的战绩';
   document.querySelectorAll('#recTabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.q==='sol'));
-  $('recList').innerHTML='<div class="meta">加载中…</div>';
+  $('recList').innerHTML='<div class="meta">⏳ 正在从腾讯拉取战绩，请稍候…</div>';
   $('recModal').style.display='flex';
   loadRecords();
 }
@@ -999,7 +999,7 @@ $('recTabs').addEventListener('click',e=>{
   const btn=e.target.closest('.tab'); if(!btn) return;
   document.querySelectorAll('#recTabs .tab').forEach(t=>t.classList.toggle('active',t===btn));
   recQueue=btn.dataset.q; recAfter='';
-  $('recList').innerHTML='<div class="meta">加载中…</div>';
+  $('recList').innerHTML='<div class="meta">⏳ 正在从腾讯拉取战绩，请稍候…</div>';
   loadRecords();
 });
 
