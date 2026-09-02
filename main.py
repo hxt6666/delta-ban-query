@@ -231,6 +231,33 @@ class DeltaAPI:
             out["totalprice"] = str(tp)
         return out
 
+    def wegame_record(self, token, queue="sol", size=20, after=None):
+        """查询 WeGame 数据源战绩列表（sol=烽火地带 / tdm=全面战场 / brick=摸金潮）。
+        后端按 WeGame 凭证缓存数据；凭证过期且未采集时返回 404。
+        分页游标 after=上一页最后一条的 event_time。"""
+        params = {"queue": queue, "size": max(1, min(20, int(size or 20)))}
+        if after:
+            params["after"] = after
+        try:
+            _s = requests.Session()
+            r = _s.get(f"{self.base_url}/api/v1/df/wegame/record", params=params,
+                       headers=self._headers({"X-Framework-Token": token}), timeout=20)
+            d = r.json()
+            _s.close()
+        except Exception as e:
+            return {"error": f"网络/解析失败: {e}"}
+        if d.get("code") == 404:
+            return {"records": [], "msg": d.get("message") or "暂无缓存数据"}
+        if d.get("code") != 0:
+            return {"error": d.get("message") or f"code={d.get('code')}"}
+        data = d.get("data") or {}
+        inner = data.get("data") or {}
+        recs = inner.get("list") or []
+        return {"records": recs if isinstance(recs, list) else [], "meta": {
+            "data_source": data.get("data_source", ""),
+            "credential_status": data.get("credential_status", ""),
+            "snapshot_at": data.get("snapshot_at", "")}}
+
     def ban_history(self, framework_token):
         """查询环数与惩罚记录（每次独立 Session，避免多线程共享 Session 卡死）"""
         try:
@@ -703,6 +730,20 @@ border-radius:8px;padding:8px 0;font-size:13px;cursor:pointer;text-align:center;
 .ava-row .ava{margin-bottom:0}
 .assets{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}
 .assets b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;margin-left:2px}
+#recModalBox{width:540px;max-width:94vw}
+#recList{max-height:56vh;overflow-y:auto}
+.rec-item{background:#10131c;border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:8px;font-size:12px}
+.rec-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rec-time{color:var(--muted);margin-left:auto}
+.rec-line{margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;color:var(--muted)}
+.rec-line b{color:var(--text);font-variant-numeric:tabular-nums}
+.gain{color:var(--green) !important}.loss{color:var(--red) !important}
+.rec-coll{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;color:var(--muted)}
+.rec-coll span{background:#17203a;border:1px solid #25314f;border-radius:6px;padding:2px 8px;color:#9db4e0}
+.badge{padding:1px 8px;border-radius:10px;font-size:11px}
+.badge.ok{background:rgba(46,213,115,.15);color:var(--green)}
+.badge.dead{background:rgba(255,71,87,.15);color:var(--red)}
+.badge.leave{background:rgba(255,165,2,.15);color:var(--orange)}
 </style>
 </head>
 <body>
@@ -768,6 +809,22 @@ border-radius:8px;padding:8px 0;font-size:13px;cursor:pointer;text-align:center;
     <div class="row">
       <button class="btn ghost" id="editClose">取消</button>
       <button class="btn" id="editOk">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="recModal">
+  <div id="recModalBox">
+    <h3>📋 <span id="recTitle">战绩</span></h3>
+    <div class="tabs" id="recTabs">
+      <button class="tab active" data-q="sol">烽火地带</button>
+      <button class="tab" data-q="tdm">全面战场</button>
+      <button class="tab" data-q="brick">摸金潮</button>
+    </div>
+    <div id="recList"></div>
+    <div class="row">
+      <button class="btn ghost" id="recClose">关闭</button>
+      <button class="btn" id="recMore">加载更多</button>
     </div>
   </div>
 </div>
@@ -876,6 +933,75 @@ async function clearObserve(uid){
   await fetch('/api/observe?uid='+encodeURIComponent(uid));
   load();
 }
+// ===== 战绩查询（WeGame 数据源） =====
+let recUid=null, recQueue='sol', recAfter='';
+function recBadge(raw){
+  if(raw.isLeave===1) return '<span class="badge leave">🚪 中途离开</span>';
+  if(raw.gameResult===0) return '<span class="badge ok">✅ 撤离成功</span>';
+  if(raw.gameResult===3) return '<span class="badge dead">❌ 阵亡</span>';
+  return '<span class="badge leave">⚠ 未撤离</span>';
+}
+async function loadRecords(){
+  if(!recUid) return;
+  $('recMore').disabled=true;
+  try{
+    let u='/api/record?uid='+encodeURIComponent(recUid)+'&queue='+recQueue+'&size=20';
+    if(recAfter) u+='&after='+encodeURIComponent(recAfter);
+    const r=await (await fetch(u)).json();
+    if(r.code!==0){ $('recList').innerHTML='<div class="meta">查询失败: '+esc(r.msg||'')+'</div>'; return; }
+    if(!recAfter) $('recList').innerHTML='';
+    if(!r.records.length && !recAfter){
+      $('recList').innerHTML='<div class="meta">'+esc(r.msg||'暂无战绩数据（后端缓存未采集，需在 WeGame 凭证有效期内玩过游戏）')+'</div>';
+    }
+    for(const rr of r.records){
+      const raw=rr.raw_record||{};
+      const dur=raw.gameTime?(Math.floor(raw.gameTime/60)+'分'+(raw.gameTime%60)+'秒'):'—';
+      const pl=Number(raw.ProfitLoss||0);
+      const plTxt=(pl>0?'+':'')+(pl<0?'-':'')+fmtNum(Math.abs(pl));
+      const plCls=pl>0?'gain':(pl<0?'loss':'');
+      const cols=raw.collections||[];
+      let collHtml='';
+      if(cols.length){
+        const chips=cols.slice(0,4).map(c=>'<span>'+esc(c.name)+'×'+(c.num||1)+' · '+fmtNum(c.price||0)+'</span>').join('');
+        collHtml='<div class="rec-coll">🎁 '+chips+(cols.length>4?'<span>等 '+cols.length+' 件</span>':'')+'</div>';
+      }
+      $('recList').insertAdjacentHTML('beforeend',
+        '<div class="rec-item">'
+        +'<div class="rec-top">'+recBadge(raw)
+        +(rr.is_ranked_match?'<span class="badge ok">🏆 排位 '+(rr.rank_match_score||0)+'</span>':'')
+        +'<span class="rec-time">'+esc(rr.event_time||'')+' · ⏱ '+dur+'</span></div>'
+        +'<div class="rec-line">'
+        +'<span>盈亏 <b class="'+plCls+'">'+plTxt+'</b></span>'
+        +'<span>🎒 带出 <b>'+fmtNum(raw.gainedPrice||0)+'</b></span>'
+        +'<span>🔫 击杀 <b>'+(raw.killCnt||0)+'</b>（玩家 '+(raw.killPlayer||0)+'）</span>'
+        +'<span>🗺 地图 '+(raw.mapId||rr.map_id||'—')+'</span>'
+        +'</div>'
+        +collHtml
+        +'</div>');
+    }
+    recAfter=r.next_after||'';
+    $('recMore').disabled=!recAfter;
+    $('recMore').textContent=recAfter?'加载更多':'没有更多了';
+  }catch(e){ $('recList').innerHTML='<div class="meta">请求失败: '+esc(e.message)+'</div>'; }
+}
+function openRecordModal(uid, name){
+  recUid=uid; recQueue='sol'; recAfter='';
+  $('recTitle').textContent=(name||'账号')+' 的战绩';
+  document.querySelectorAll('#recTabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.q==='sol'));
+  $('recList').innerHTML='<div class="meta">加载中…</div>';
+  $('recModal').style.display='flex';
+  loadRecords();
+}
+$('recClose').onclick=()=>{ recUid=null; $('recModal').style.display='none'; };
+$('recModal').addEventListener('click',e=>{ if(e.target===$('recModal')){ recUid=null; $('recModal').style.display='none'; } });
+$('recMore').onclick=()=>loadRecords();
+$('recTabs').addEventListener('click',e=>{
+  const btn=e.target.closest('.tab'); if(!btn) return;
+  document.querySelectorAll('#recTabs .tab').forEach(t=>t.classList.toggle('active',t===btn));
+  recQueue=btn.dataset.q; recAfter='';
+  $('recList').innerHTML='<div class="meta">加载中…</div>';
+  loadRecords();
+});
 
 async function load(){
   try{
@@ -921,7 +1047,8 @@ async function load(){
       const card=document.createElement('div'); card.className='card';
       const nm=escAttr(r.name||name);
       card.innerHTML='<div class="name"><span class="dot '+dotCls+'"></span>'+esc(r.name||name)+'<span class="tag">'+label+'</span>'
-        +(r.uid?'<button class="btn-edit" title="改名 / 备注" onclick="openEditModal(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;,&quot;'+escAttr(r.note||'')+'&quot;)">✏️</button>'
+        +(r.uid?'<button class="btn-edit" title="战绩查询" onclick="openRecordModal(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;)">📋</button>'
+              +'<button class="btn-edit" title="改名 / 备注" onclick="openEditModal(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;,&quot;'+escAttr(r.note||'')+'&quot;)">✏️</button>'
               +'<button class="btn-del" title="删除账号" onclick="delAccount(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;)">🗑</button>':'')
         +'</div>'
         +((r.avatar||r.hafcoin||r.totalprice)?'<div class="ava-row">'
@@ -1304,6 +1431,30 @@ def run_web(cfg, port=8808):
                 tracker.accounts = cfg["accounts"]
                 tracker.poll_async()
                 self._json({"code": 0, "msg": msg})
+                return
+
+            # ---- WeGame 战绩查询 ----
+            if path == "/api/record":
+                uid = (qs.get("uid") or [""])[0].strip()
+                queue = (qs.get("queue") or ["sol"])[0].strip()
+                after = (qs.get("after") or [""])[0].strip()
+                size = (qs.get("size") or ["20"])[0].strip()
+                if not uid:
+                    self._json({"code": 1, "msg": "缺少 uid 参数"})
+                    return
+                acc = next((a for a in cfg["accounts"] if a.get("framework_token") == uid), None)
+                if not acc or not acc.get("wegame_token"):
+                    self._json({"code": 1, "msg": "该账号未绑定 WeGame，无法查战绩（可在面板用 WeGame 扫码补绑）"})
+                    return
+                res = tracker.api.wegame_record(acc["wegame_token"], queue=queue, size=size,
+                                                after=after or None)
+                if "error" in res:
+                    self._json({"code": 1, "msg": res["error"]})
+                    return
+                recs = res.get("records", [])
+                self._json({"code": 0, "queue": queue, "records": recs,
+                            "next_after": recs[-1].get("event_time", "") if recs else "",
+                            "msg": res.get("msg", ""), "meta": res.get("meta", {})})
                 return
 
             # ---- 编辑账号：改名 / 修改备注 ----
