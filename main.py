@@ -258,78 +258,6 @@ class DeltaAPI:
             "credential_status": data.get("credential_status", ""),
             "snapshot_at": data.get("snapshot_at", "")}}
 
-    # ---- 平台账号（delta-test.shallow.ink）与个人数据接口 ----
-    def platform_login(self, account, password):
-        """平台账号登录（POST auth/login, account+password），返回访问令牌。
-        实测 person/* 系列（特勤处/日报/战绩等）需要 API Key + 平台 JWT 双重认证。"""
-        try:
-            _s = requests.Session()
-            r = _s.post(f"{self.base_url}/api/v1/auth/login",
-                        json={"account": account, "password": password},
-                        headers=self._headers(), timeout=20)
-            d = r.json()
-            _s.close()
-        except Exception as e:
-            return {"error": f"网络/解析失败: {e}"}
-        if d.get("code") != 0:
-            return {"error": d.get("message") or f"code={d.get('code')}"}
-        data = d.get("data") or {}
-        if isinstance(data.get("tokens"), dict):
-            data = {**data.get("tokens"), **{k: v for k, v in data.items()
-                                             if k not in ("tokens",)}}
-
-        def _pick(*names):
-            for n in names:
-                if data.get(n):
-                    return str(data[n])
-            return ""
-        access = _pick("access_token", "accessToken", "token")
-        refresh = _pick("refresh_token", "refreshToken")
-        if not access:
-            return {"error": "登录成功但响应中未找到令牌字段"}
-        return {"access_token": access, "refresh_token": refresh}
-
-    def _person_get(self, path, framework_token, cfg):
-        """带平台 JWT 的 person/* 请求；无令牌先登录，401 自动重登一次。"""
-        plat = cfg.setdefault("platform", {})
-        if not plat.get("access_token") and plat.get("password"):
-            res = self.platform_login(plat.get("account", ""), plat.get("password", ""))
-            if "error" in res:
-                return {"error": res["error"]}
-            plat["access_token"] = res["access_token"]
-            plat["refresh_token"] = res.get("refresh_token", "")
-        if not plat.get("access_token"):
-            return {"error": "需要平台登录：请点右上角 🔑 用 delta-test.shallow.ink 的账号登录（或粘贴访问令牌）"}
-
-        def _call():
-            _s = requests.Session()
-            r = _s.get(f"{self.base_url}{path}",
-                       headers={**self._headers(),
-                                "Authorization": f"Bearer {plat['access_token']}",
-                                "X-Framework-Token": framework_token}, timeout=20)
-            _s.close()
-            return r
-
-        try:
-            r = _call()
-            if r.status_code == 401 and plat.get("password"):
-                res = self.platform_login(plat.get("account", ""), plat.get("password", ""))
-                if "error" not in res:
-                    plat["access_token"] = res["access_token"]
-                    plat["refresh_token"] = res.get("refresh_token", "")
-                    save_config(cfg)
-                    r = _call()
-            d = r.json()
-        except Exception as e:
-            return {"error": f"网络/解析失败: {e}"}
-        if d.get("code") != 0:
-            return {"error": d.get("message") or f"code={d.get('code')}"}
-        return {"data": d.get("data")}
-
-    def placestatus(self, framework_token, cfg):
-        """特勤处状态：设施等级/生产状态/制造物品详情等（person 系列）"""
-        return self._person_get("/api/v1/df/person/placestatus", framework_token, cfg)
-
     def ban_history(self, framework_token):
         """查询环数与惩罚记录（每次独立 Session，避免多线程共享 Session 卡死）"""
         try:
@@ -786,14 +714,6 @@ input:focus{border-color:#3b82f6}
 #modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10;align-items:center;justify-content:center}
 #cdModal,#editModal,#recModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:11;align-items:center;justify-content:center}
 #modalBox,#cdModalBox,#editModalBox{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px;width:340px;max-width:92vw}
-#recModalBox,#placeModalBox{width:560px;max-width:94vw}
-#platModalBox{width:400px;max-width:92vw}
-.kv{display:flex;gap:8px;padding:2px 0;font-size:12px;align-items:baseline}
-.kv .k{color:var(--muted);min-width:96px;flex-shrink:0}
-.kv .sub{margin-left:4px}
-#platModal,#placeModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:12;align-items:center;justify-content:center}
-#placeList{max-height:56vh;overflow-y:auto}
-#platModalBox h3,#placeModalBox h3{margin:0 0 6px;font-size:16px}
 #modalBox h3,#cdModalBox h3,#editModalBox h3{margin:0 0 6px;font-size:16px}
 #qrBox{display:none;margin-top:14px;text-align:center}
 #qrImg{width:170px;height:170px;background:#fff;border-radius:10px;padding:8px}
@@ -830,7 +750,6 @@ border-radius:8px;padding:8px 0;font-size:13px;cursor:pointer;text-align:center;
 <div class="top">
   <h1>📋 三角洲封号倒计时</h1>
   <button class="btn" id="btnBind">➕ 扫码绑定账号</button>
-  <button class="btn ghost" id="btnPlat" title="登录 delta-test.shallow.ink 平台账号，解锁特勤处/日报/战绩等个人数据">🔑 平台登录</button>
 </div>
 <div class="sub" id="sub">加载中...</div>
 <div class="grid" id="grid"></div>
@@ -906,36 +825,6 @@ border-radius:8px;padding:8px 0;font-size:13px;cursor:pointer;text-align:center;
     <div class="row">
       <button class="btn ghost" id="recClose">关闭</button>
       <button class="btn" id="recMore">加载更多</button>
-    </div>
-  </div>
-</div>
-
-<div id="platModal">
-  <div id="platModalBox">
-    <h3>🔑 平台账号登录</h3>
-    <div class="sub" style="margin-bottom:8px">登录 delta-test.shallow.ink 账号，解锁特勤处/日报/战绩等个人数据。凭据只保存在本机 accounts.json。</div>
-    <div class="meta" style="margin-bottom:4px">账号（邮箱/用户名）</div>
-    <input id="platAccount" placeholder="你在平台注册的邮箱或用户名">
-    <div class="meta" style="margin:10px 0 4px">密码</div>
-    <input id="platPassword" type="password" placeholder="平台密码">
-    <div class="meta" style="margin:10px 0 4px">或者：粘贴平台访问令牌（OAuth 注册用户没有密码时，登录官网后从浏览器控制台 localStorage 里复制）</div>
-    <input id="platToken" placeholder="eyJhbGciOi...（可选）">
-    <div id="platMsg" class="meta" style="margin-top:8px;min-height:16px"></div>
-    <div class="row">
-      <button class="btn ghost" id="platClose">取消</button>
-      <button class="btn" id="platOk">保存并登录</button>
-    </div>
-  </div>
-</div>
-
-<div id="placeModal">
-  <div id="placeModalBox">
-    <h3>🏠 <span id="placeTitle">特勤处</span></h3>
-    <div class="meta" style="margin-bottom:6px">设施等级 / 生产状态 / 制造详情（数据来自平台个人数据接口）</div>
-    <div id="placeList"></div>
-    <div class="row">
-      <button class="btn ghost" id="placeClose">关闭</button>
-      <button class="btn" id="placeRefresh">刷新</button>
     </div>
   </div>
 </div>
@@ -1113,85 +1002,6 @@ $('recTabs').addEventListener('click',e=>{
   $('recList').innerHTML='<div class="meta">⏳ 正在从腾讯拉取战绩，请稍候…</div>';
   loadRecords();
 });
-// ===== 特勤处（需要平台登录） =====
-let placeUid = null;
-function fmtPlaceValue(v){
-  if(v===null||v===undefined||v==='') return '—';
-  if(typeof v==='boolean') return v?'✅':'⛔';
-  const s=String(v);
-  if(/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z?$/.test(s)){
-    try{ return new Date(s).toLocaleString('zh-CN',{hour12:false}); }catch(e){}
-  }
-  return esc(s.length>60?s.slice(0,60)+'…':s);
-}
-function renderPlaceNode(val, depth){
-  if(val===null||val===undefined) return '';
-  if(Array.isArray(val)){
-    if(!val.length) return '<div class="kv" style="padding-left:'+(depth*14)+'px"><span class="k">列表</span><span>空</span></div>';
-    return val.map((item)=>renderPlaceNode(item, depth)).join('');
-  }
-  if(typeof val==='object'){
-    let html='';
-    for(const [k,v] of Object.entries(val)){
-      if(v&&typeof v==='object'){
-        const count=Array.isArray(v)?(' ('+v.length+')'):'';
-        html+='<div class="kv" style="padding-left:'+(depth*14)+'px"><span class="k" style="color:var(--text);font-weight:600">▸ '+esc(k)+count+'</span></div>'
-          +renderPlaceNode(v, depth+1);
-      }else{
-        html+='<div class="kv" style="padding-left:'+(depth*14)+'px"><span class="k">'+esc(k)+'</span><span>'+fmtPlaceValue(v)+'</span></div>';
-      }
-    }
-    return html;
-  }
-  return '<div class="kv" style="padding-left:'+(depth*14)+'px"><span>'+fmtPlaceValue(val)+'</span></div>';
-}
-async function loadPlace(){
-  if(!placeUid) return;
-  $('placeList').innerHTML='<div class="meta">⏳ 加载特勤处数据…</div>';
-  try{
-    const r=await (await fetch('/api/place?uid='+encodeURIComponent(placeUid))).json();
-    if(r.code!==0){
-      const needLogin=r.msg&&r.msg.indexOf('平台登录')>=0;
-      $('placeList').innerHTML='<div class="meta">⚠ '+esc(r.msg||'')+'</div>'
-        +(needLogin?'<div style="margin-top:10px"><button class="btn btn-sm" onclick="openPlatModal()">🔑 立即登录平台</button></div>':'');
-      return;
-    }
-    $('placeList').innerHTML=renderPlaceNode(r.data,0)||'<div class="meta">数据为空</div>';
-  }catch(e){ $('placeList').innerHTML='<div class="meta">请求失败: '+esc(e.message)+'</div>'; }
-}
-function openPlaceModal(uid, name){
-  placeUid=uid;
-  $('placeTitle').textContent=(name||'账号')+' 的特勤处';
-  $('placeModal').style.display='flex';
-  loadPlace();
-}
-$('placeClose').onclick=()=>{ placeUid=null; $('placeModal').style.display='none'; };
-$('placeModal').addEventListener('click',e=>{ if(e.target===$('placeModal')){ placeUid=null; $('placeModal').style.display='none'; } });
-$('placeRefresh').onclick=()=>loadPlace();
-// ===== 平台登录 =====
-function openPlatModal(){
-  $('platMsg').textContent='';
-  $('platModal').style.display='flex';
-  fetch('/api/platform/status').then(r=>r.json()).then(s=>{
-    if(s.logged) $('platMsg').innerHTML='已登录: '+esc(s.account||'(令牌模式)')+(s.has_password?'（保存了密码，令牌过期自动重登）':'（令牌模式）');
-  }).catch(()=>{});
-}
-$('btnPlat').onclick=openPlatModal;
-$('platClose').onclick=()=>{ $('platModal').style.display='none'; };
-$('platModal').addEventListener('click',e=>{ if(e.target===$('platModal')) $('platModal').style.display='none'; });
-$('platOk').onclick=async()=>{
-  const account=$('platAccount').value.trim(), password=$('platPassword').value, token=$('platToken').value.trim();
-  $('platOk').disabled=true; $('platMsg').textContent='⏳ 处理中…';
-  try{
-    let u='/api/platform/login?';
-    if(token) u+='token='+encodeURIComponent(token);
-    else u+='account='+encodeURIComponent(account)+'&password='+encodeURIComponent(password);
-    const r=await (await fetch(u)).json();
-    if(r.code===0){ $('platMsg').innerHTML='<b style="color:var(--green)">'+esc(r.msg)+'</b>'; setTimeout(()=>$('platModal').style.display='none',1200); }
-    else $('platMsg').innerHTML='<span style="color:var(--red)">'+esc(r.msg||'失败')+'</span>';
-  }catch(e){ $('platMsg').innerHTML='<span style="color:var(--red)">请求失败: '+esc(e.message)+'</span>'; }
-  finally{ $('platOk').disabled=false; }
-};
 
 async function load(){
   try{
@@ -1238,7 +1048,6 @@ async function load(){
       const nm=escAttr(r.name||name);
       card.innerHTML='<div class="name"><span class="dot '+dotCls+'"></span>'+esc(r.name||name)+'<span class="tag">'+label+'</span>'
         +(r.uid?'<button class="btn-edit" title="战绩查询" onclick="openRecordModal(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;)">📋</button>'
-              +'<button class="btn-edit" title="特勤处" onclick="openPlaceModal(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;)">🏠</button>'
               +'<button class="btn-edit" title="改名 / 备注" onclick="openEditModal(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;,&quot;'+escAttr(r.note||'')+'&quot;)">✏️</button>'
               +'<button class="btn-del" title="删除账号" onclick="delAccount(&quot;'+escAttr(r.uid)+'&quot;,&quot;'+nm+'&quot;)">🗑</button>':'')
         +'</div>'
@@ -1622,62 +1431,6 @@ def run_web(cfg, port=8808):
                 tracker.accounts = cfg["accounts"]
                 tracker.poll_async()
                 self._json({"code": 0, "msg": msg})
-                return
-
-            # ---- 平台账号登录（解锁特勤处/日报/战绩等 person 系列） ----
-            if path == "/api/platform/login":
-                account = (qs.get("account") or [""])[0].strip()
-                password = (qs.get("password") or [""])[0]
-                token = (qs.get("token") or [""])[0].strip()
-                plat = cfg.setdefault("platform", {})
-                if token:
-                    # 手动粘贴访问令牌（OAuth 注册用户没有密码时用）
-                    plat["access_token"] = token
-                    save_config(cfg)
-                    self._json({"code": 0, "msg": "✅ 访问令牌已保存"})
-                    return
-                if not account or not password:
-                    self._json({"code": 1, "msg": "请填写账号和密码，或粘贴访问令牌"})
-                    return
-                res = tracker.api.platform_login(account, password)
-                if "error" in res:
-                    self._json({"code": 1, "msg": res["error"]})
-                    return
-                plat["account"] = account
-                plat["password"] = password
-                plat["access_token"] = res["access_token"]
-                plat["refresh_token"] = res.get("refresh_token", "")
-                save_config(cfg)
-                self._json({"code": 0, "msg": "✅ 平台登录成功，特勤处等功能已解锁"})
-                return
-
-            # ---- 平台登录状态 ----
-            if path == "/api/platform/status":
-                plat = cfg.get("platform") or {}
-                acc = plat.get("account", "")
-                masked = (acc[:2] + "***" + acc[acc.index("@"):] if "@" in acc and len(acc) > 4
-                          else (acc[:3] + "***" if acc else ""))
-                self._json({"code": 0, "logged": bool(plat.get("access_token")),
-                            "has_password": bool(plat.get("password")),
-                            "account": masked})
-                return
-
-            # ---- 特勤处状态 ----
-            if path == "/api/place":
-                uid = (qs.get("uid") or [""])[0].strip()
-                if not uid:
-                    self._json({"code": 1, "msg": "缺少 uid 参数"})
-                    return
-                acc = next((a for a in cfg["accounts"] if a.get("framework_token") == uid), None)
-                if not acc:
-                    self._json({"code": 1, "msg": "账号不存在"})
-                    return
-                res = tracker.api.placestatus(acc["framework_token"], cfg)
-                if "error" in res:
-                    self._json({"code": 1, "msg": res["error"]})
-                    return
-                save_config(cfg)  # JWT 自动登录/刷新后落盘
-                self._json({"code": 0, "data": res.get("data")})
                 return
 
             # ---- WeGame 战绩查询 ----
