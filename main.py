@@ -253,7 +253,21 @@ class DeltaAPI:
         data = d.get("data") or {}
         inner = data.get("data") or {}
         recs = inner.get("list") or []
-        return {"records": recs if isinstance(recs, list) else [], "meta": {
+        # 兼容两种数据源形状：cache=记录带 raw_record 包装；live=腾讯字段直接平铺在记录上
+        norm = []
+        for rec in recs if isinstance(recs, list) else []:
+            if not isinstance(rec, dict):
+                continue
+            raw = rec.get("raw_record")
+            if isinstance(raw, dict):
+                rec = {**rec, **{k: v for k, v in raw.items() if k not in rec}}
+            else:
+                rec = dict(rec)
+                rec.setdefault("raw_record", rec)  # 平铺时 raw_record 指向自身
+                if not rec.get("event_time"):
+                    rec["event_time"] = rec.get("dtEventTime") or rec.get("startTime") or ""
+            norm.append(rec)
+        return {"records": norm, "meta": {
             "data_source": data.get("data_source", ""),
             "credential_status": data.get("credential_status", ""),
             "snapshot_at": data.get("snapshot_at", "")}}
@@ -954,7 +968,7 @@ async function loadRecords(){
       $('recList').innerHTML='<div class="meta">'+esc(r.msg||'暂无战绩数据（后端缓存未采集，需在 WeGame 凭证有效期内玩过游戏）')+'</div>';
     }
     for(const rr of r.records){
-      const raw=rr.raw_record||{};
+      const raw=rr.raw_record||rr;
       const dur=raw.gameTime?(Math.floor(raw.gameTime/60)+'分'+(raw.gameTime%60)+'秒'):'—';
       const pl=Number(raw.ProfitLoss||0);
       const plTxt=(pl>0?'+':'')+(pl<0?'-':'')+fmtNum(Math.abs(pl));
@@ -965,11 +979,12 @@ async function loadRecords(){
         const chips=cols.slice(0,4).map(c=>'<span>'+esc(c.name)+'×'+(c.num||1)+' · '+fmtNum(c.price||0)+'</span>').join('');
         collHtml='<div class="rec-coll">🎁 '+chips+(cols.length>4?'<span>等 '+cols.length+' 件</span>':'')+'</div>';
       }
+      const evt=rr.event_time||raw.dtEventTime||'';
       $('recList').insertAdjacentHTML('beforeend',
         '<div class="rec-item">'
         +'<div class="rec-top">'+recBadge(raw)
-        +(rr.is_ranked_match?'<span class="badge ok">🏆 排位 '+(rr.rank_match_score||0)+'</span>':'')
-        +'<span class="rec-time">'+esc(rr.event_time||'')+' · ⏱ '+dur+'</span></div>'
+        +((rr.is_ranked_match||(raw.isRankMatch===1))?'<span class="badge ok">🏆 排位 '+(rr.rank_match_score||0)+'</span>':'')
+        +'<span class="rec-time">'+esc(evt)+' · ⏱ '+dur+'</span></div>'
         +'<div class="rec-line">'
         +'<span>盈亏 <b class="'+plCls+'">'+plTxt+'</b></span>'
         +'<span>🎒 带出 <b>'+fmtNum(raw.gainedPrice||0)+'</b></span>'
@@ -1453,7 +1468,7 @@ def run_web(cfg, port=8808):
                     return
                 recs = res.get("records", [])
                 self._json({"code": 0, "queue": queue, "records": recs,
-                            "next_after": recs[-1].get("event_time", "") if recs else "",
+                            "next_after": recs[-1].get("event_time") or recs[-1].get("dtEventTime", "") if recs else "",
                             "msg": res.get("msg", ""), "meta": res.get("meta", {})})
                 return
 
