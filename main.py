@@ -263,7 +263,10 @@ class DeltaAPI:
                 rec = {**rec, **{k: v for k, v in raw.items() if k not in rec}}
             else:
                 rec = dict(rec)
-                rec.setdefault("raw_record", rec)  # 平铺时 raw_record 指向自身
+                if not rec.get("event_time"):
+                    rec["event_time"] = rec.get("dtEventTime") or rec.get("startTime") or ""
+                # live 数据源腾讯字段直接平铺, 前端统一从 raw_record 取 → 引用副本
+                rec["raw_record"] = {k: v for k, v in rec.items() if k != "raw_record"}
                 if not rec.get("event_time"):
                     rec["event_time"] = rec.get("dtEventTime") or rec.get("startTime") or ""
             norm.append(rec)
